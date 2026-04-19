@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "signal_id": "TQQQ-2099-04-18-a3f9",
+  "issued_at": "2099-04-18T22:05:00Z",
+  "ticker": "TQQQ",
+  "action": "BUY",
+  "qty_shares": 13,
+  "notional_usd": 650.00,
+  "limit_price": 48.30,
+  "reference_price": 47.56,
+  "confidence": "high",
+  "expires_at": "2099-04-19T15:00:00Z",
+  "context": {
+    "phase": "ACCUMULATION",
+    "fib_level": 0,
+    "fg_index": 35,
+    "bullets_spent": 1.3,
+    "crossover_date": "2099-02-04",
+    "crossover_price": 49.68
+  }
+}

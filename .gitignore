@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+.venv/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# Local secrets / env
+.env
+.env.local
+
+# Runtime state — the SQLite DB is local-only; receipts are committed
+state/*.db
+state/*.db-journal
+state/*.db-wal
+state/*.db-shm
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/

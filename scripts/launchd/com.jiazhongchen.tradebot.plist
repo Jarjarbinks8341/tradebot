@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hourly bot runner. Copy this file to:
+    ~/Library/LaunchAgents/com.jiazhongchen.tradebot.plist
+
+  Customize:
+    - UV_BIN below to match `which uv` (Apple Silicon homebrew: /opt/homebrew/bin/uv)
+    - WorkingDirectory to repo root
+
+  Then load:
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jiazhongchen.tradebot.plist
+    launchctl kickstart -k gui/$(id -u)/com.jiazhongchen.tradebot   # run once now
+
+  Logs:
+    ~/Library/Logs/tradebot.out.log
+    ~/Library/Logs/tradebot.err.log
+
+  `Minute=5` fires at HH:05 — dodges top-of-hour traffic and the ~01:00 ET
+  IB Gateway daily restart window.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jiazhongchen.tradebot</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/uv</string>
+    <string>run</string>
+    <string>python</string>
+    <string>-m</string>
+    <string>executor.execute</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/jiazhongchen/repo/tradebot</string>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Minute</key>
+    <integer>5</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/jiazhongchen/Library/Logs/tradebot.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/jiazhongchen/Library/Logs/tradebot.err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>

@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  IB Gateway keep-alive via IBC (IBCAlpha/IBC).
+
+  Preconditions (all done manually first):
+    1. IB Gateway "Stable" (offline) installed via GUI installer. For IBC
+       to find it on macOS, the install path must be:
+         /Users/jiazhongchen/Applications/IB Gateway <version>/
+       If you customized the installer path elsewhere (e.g. under IBJts),
+       add a symlink so the above path exists.
+    2. IBC 3.x unpacked to /Users/jiazhongchen/ibc/.
+    3. /Users/jiazhongchen/ibc/gatewaystartmacos.sh edited at the top:
+         TWS_MAJOR_VRSN=<e.g. 10.37>
+         TRADING_MODE=paper   (or live)
+         IBC_PATH=~/ibc
+         TWS_PATH=~/Applications
+    4. /Users/jiazhongchen/ibc/config.ini filled in with paper credentials
+       and chmod 600'd. `IbDir=/Users/jiazhongchen/Applications/IBJts`
+       (only used for TWS layout — harmless when unused).
+    5. Settings dir exists: `mkdir -p /Users/jiazhongchen/Jts`
+    6. IB Gateway launched once manually so Gatekeeper accepts it.
+
+  Load:
+    cp scripts/launchd/com.jiazhongchen.ibgateway.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jiazhongchen.ibgateway.plist
+
+  KeepAlive=true so the daily auto-logout restart cycle self-heals.
+  Gateway listens on 127.0.0.1:4002 (paper) or 4001 (live) once up.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jiazhongchen.ibgateway</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/jiazhongchen/ibc/gatewaystartmacos.sh</string>
+    <string>-inline</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/jiazhongchen/ibc</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/jiazhongchen/Library/Logs/ibgateway.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/jiazhongchen/Library/Logs/ibgateway.err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>
