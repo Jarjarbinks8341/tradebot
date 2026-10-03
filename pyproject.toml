@@ -8,7 +8,11 @@ dependencies = [
     "httpx>=0.27",
     "ib-async>=1.0.3",
     "python-dotenv>=1.0",
+    "fastmcp>=2.0.0",
 ]
+
+[project.scripts]
+tradebot-mcp = "executor.mcp_server:main"
 
 [dependency-groups]
 dev = [

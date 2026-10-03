@@ -12,7 +12,7 @@ import asyncio
 import json
 import logging
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import gates
@@ -96,12 +96,23 @@ async def _handle_tradeable(
 
     limit = signal.limit_price if signal.limit_price is not None else signal.reference_price
     if signal.action == Action.BUY:
-        bp = await broker.get_buying_power()
-        g = gates.buying_power_sufficient(bp, qty, limit, settings.buying_power_buffer)
-        gate_log.append(f"buying_power_sufficient: {g.reason}")
-        if not g.ok:
-            store.record(signal.signal_id, "rejected", notes=g.reason)
-            return "rejected"
+        # Producer sizes against its own capital assumption, not this account — so cap
+        # every BUY by settled cash (never margin) and by hard per-order/daily limits.
+        cash = await broker.get_cash()
+        today = datetime.now(UTC) - timedelta(hours=24)
+        for name, g in (
+            ("cash_sufficient",
+             gates.cash_sufficient(cash, qty, limit, settings.buying_power_buffer)),
+            ("order_notional_within_cap",
+             gates.order_notional_within_cap(qty, limit, settings.max_order_usd)),
+            ("daily_notional_within_cap",
+             gates.daily_notional_within_cap(
+                 store.placed_buy_notional_since(today), qty * limit, settings.max_daily_usd)),
+        ):
+            gate_log.append(f"{name}: {g.reason}")
+            if not g.ok:
+                store.record(signal.signal_id, "rejected", notes=g.reason)
+                return "rejected"
     else:  # SELL
         pos = await broker.get_position(signal.ticker)
         g = gates.position_sufficient(pos, qty)
@@ -117,6 +128,9 @@ async def _handle_tradeable(
         return "dry-run"
 
     handle = await broker.place_limit_order(signal.ticker, signal.action, qty, limit)
+    store.record_order(
+        "executor", signal.ticker, signal.action.value, qty, limit, order_id=handle.broker_id
+    )
     log.info(
         "placed %s %s %s @ %s (orderId=%s)",
         signal.action.value,

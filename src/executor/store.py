@@ -21,6 +21,16 @@ CREATE TABLE IF NOT EXISTS executed_signals (
     fill_price   REAL,
     notes        TEXT
 );
+
+CREATE TABLE IF NOT EXISTS placed_orders (
+    placed_at    TEXT NOT NULL,
+    source       TEXT NOT NULL,   -- "executor" | "mcp"
+    ticker       TEXT NOT NULL,
+    side         TEXT NOT NULL,
+    qty          REAL NOT NULL,
+    limit_price  REAL NOT NULL,
+    order_id     TEXT
+);
 """
 
 
@@ -67,3 +77,28 @@ class Store:
                 """,
                 (signal_id, status, now, order_id, fill_price, notes),
             )
+
+    def record_order(
+        self,
+        source: str,
+        ticker: str,
+        side: str,
+        qty: float,
+        limit_price: float,
+        order_id: str | None = None,
+    ) -> None:
+        """Ledger of every live order sent to the broker, from any source (daily cap input)."""
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO placed_orders VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (datetime.now(UTC).isoformat(), source, ticker, side, qty, limit_price, order_id),
+            )
+
+    def placed_buy_notional_since(self, since: datetime) -> float:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT COALESCE(SUM(qty * limit_price), 0) FROM placed_orders "
+                "WHERE side = 'BUY' AND placed_at >= ?",
+                (since.astimezone(UTC).isoformat(),),
+            ).fetchone()
+        return float(row[0])
