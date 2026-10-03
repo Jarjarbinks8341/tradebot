@@ -59,7 +59,9 @@ launchd  ──►  execute.main()
 - **No git push from the bot.** Receipts are written to disk; the user reviews and commits manually. Keeps git credentials out of the cron environment. The SQLite store is the authoritative record.
 - **`EXECUTE=false` is the default.** User must explicitly enable live trading in `.env.local`. Plan: run against paper account for ≥2 weeks before flipping to live.
 - **Fractional shares are rejected in Phase 1.** IBKR supports fractional via `cashQty` instead of `totalQuantity`, but the branching logic is Phase-2 work. For now, `qty_shares` must be a whole number or the signal is rejected with a clear message. Producer should round before emitting.
-- **`signals/` 404 = no-op.** fib-accumulator's producer-side work (`--emit-signal` flag, `daily-signal.yml` workflow) hasn't shipped yet; until it does, every tick is a clean no-op.
+- **`signals/` 404 = no-op.** A 404 is silently treated as "no signals" — so a wrong `FIB_REPO` looks exactly like a quiet market. The repo is `Jarjarbinks8341/fib-accumulator` (private); verify with `scripts/smoke_poller.py` after any config change. (It sat on the wrong owner from 2026-04 to 2026-10 unnoticed.)
+- **BUYs never use margin.** The producer sizes signals against its own `FIB_INITIAL_CAPITAL` ($50k), not this account. Every live BUY (executor or MCP) is gated on settled cash (`TotalCashValue`, not `BuyingPower` which includes ~6.7x margin), plus `MAX_ORDER_USD` per order and `MAX_DAILY_USD` rolling-24h across both sources (`placed_orders` table).
+- **MCP server places real orders** (`tradebot-mcp`, stdio only). Two-step `preview_order` → `place_order(preview_id)`; preview is single-use, expires in 5 min; HALT and daily cap re-checked at place time. Limit orders, whole shares, fat-finger guard (`MAX_LIMIT_FROM_QUOTE_PCT`). Uses `IB_MCP_CLIENT_ID` (18) so it never collides with the executor (17).
 
 ## Module map
 
@@ -71,6 +73,8 @@ launchd  ──►  execute.main()
 | `src/executor/gates.py` | Pure `(ok, reason)` functions: halt file, market hours (hard-coded NYSE holidays 2026-2027), drift, buying power, positions, open orders. |
 | `src/executor/broker/base.py` | `BrokerClient` `Protocol` + `OrderHandle`/`OrderResult` dataclasses. |
 | `src/executor/broker/ibkr.py` | `ib-async` implementation. Caches buying power + positions per-invocation to respect rate limits. |
+| `src/executor/order_desk.py` | Preview → place state machine + gates for manual (MCP) orders. Pure enough to test with a fake broker. |
+| `src/executor/mcp_server.py` | FastMCP tools: `get_account`, `get_quote`, `preview_order`, `place_order`, `list_open_orders`, `cancel_order`. |
 | `src/executor/execute.py` | Orchestration entrypoint. `--signal-file` for offline fixture dry-runs. |
 | `src/executor/config.py` | `.env.local` / `.env` loader; frozen `Settings` dataclass. |
 | `tests/fixtures/sample_signal.json` | Canonical schema example. Dates in 2099 so `is_expired()` is always false. |

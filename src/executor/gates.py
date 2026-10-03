@@ -93,6 +93,60 @@ def buying_power_sufficient(
     return GateResult(True, f"bp ${buying_power:.2f} >= required ${required:.2f}")
 
 
+def cash_sufficient(
+    cash: float, qty: float, limit_price: float, buffer_mult: float
+) -> GateResult:
+    """Like buying_power_sufficient but against settled cash — never funds a buy on margin."""
+    required = qty * limit_price * buffer_mult
+    if cash < required:
+        return GateResult(
+            False,
+            f"cash ${cash:.2f} < required ${required:.2f} "
+            f"(qty={qty} x limit=${limit_price:.2f} x buffer={buffer_mult}) — no margin",
+        )
+    return GateResult(True, f"cash ${cash:.2f} >= required ${required:.2f}")
+
+
+def order_notional_within_cap(qty: float, limit_price: float, max_usd: float) -> GateResult:
+    notional = qty * limit_price
+    if notional > max_usd:
+        return GateResult(False, f"order ${notional:.2f} > per-order cap ${max_usd:.2f}")
+    return GateResult(True, f"order ${notional:.2f} <= per-order cap ${max_usd:.2f}")
+
+
+def daily_notional_within_cap(
+    already_today_usd: float, this_order_usd: float, max_daily_usd: float
+) -> GateResult:
+    total = already_today_usd + this_order_usd
+    if total > max_daily_usd:
+        return GateResult(
+            False,
+            f"daily total ${total:.2f} (today ${already_today_usd:.2f} + this "
+            f"${this_order_usd:.2f}) > daily cap ${max_daily_usd:.2f}",
+        )
+    return GateResult(True, f"daily total ${total:.2f} <= daily cap ${max_daily_usd:.2f}")
+
+
+def limit_near_quote(limit_price: float, quote: float, max_pct: float) -> GateResult:
+    """Fat-finger guard: limit must sit within max_pct of the live quote."""
+    if quote <= 0 or limit_price <= 0:
+        return GateResult(False, f"non-positive price (limit=${limit_price} quote=${quote})")
+    pct = abs(limit_price - quote) / quote * 100
+    if pct > max_pct:
+        return GateResult(
+            False,
+            f"limit ${limit_price:.2f} is {pct:.2f}% from quote ${quote:.2f} "
+            f"(max {max_pct:.2f}%)",
+        )
+    return GateResult(True, f"limit {pct:.2f}% from quote")
+
+
+def whole_shares(qty: float) -> GateResult:
+    if qty <= 0 or qty != int(qty):
+        return GateResult(False, f"qty {qty} must be a positive whole number of shares")
+    return GateResult(True, f"qty {int(qty)}")
+
+
 def position_sufficient(position: float, qty: float) -> GateResult:
     if position < qty:
         return GateResult(False, f"position {position} < qty {qty}")
@@ -110,11 +164,16 @@ def no_open_orders(open_orders_for_ticker: list) -> GateResult:
 __all__ = [
     "GateResult",
     "buying_power_sufficient",
+    "cash_sufficient",
+    "daily_notional_within_cap",
     "halt_file_absent",
+    "limit_near_quote",
     "market_is_open",
     "no_open_orders",
+    "order_notional_within_cap",
     "position_sufficient",
     "reference_price_drift",
+    "whole_shares",
 ]
 
 

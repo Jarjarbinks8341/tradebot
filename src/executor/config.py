@@ -56,6 +56,12 @@ class Settings:
     buying_power_buffer: float
     order_poll_timeout_s: int
 
+    # Live-trading hard limits (apply to both the hourly executor and the MCP server)
+    max_order_usd: float
+    max_daily_usd: float
+    max_limit_from_quote_pct: float
+    ib_mcp_client_id: int
+
     # Paths
     state_db: Path
     receipts_dir: Path
@@ -82,6 +88,10 @@ class Settings:
             max_reference_drift_pct=_float("MAX_REFERENCE_DRIFT_PCT", 5.0),
             buying_power_buffer=_float("BUYING_POWER_BUFFER", 1.02),
             order_poll_timeout_s=_int("ORDER_POLL_TIMEOUT_S", 300),
+            max_order_usd=_float("MAX_ORDER_USD", 2500.0),
+            max_daily_usd=_float("MAX_DAILY_USD", 5000.0),
+            max_limit_from_quote_pct=_float("MAX_LIMIT_FROM_QUOTE_PCT", 3.0),
+            ib_mcp_client_id=_int("IB_MCP_CLIENT_ID", 18),
             state_db=(root / state_db) if not state_db.is_absolute() else state_db,
             receipts_dir=(root / receipts_dir) if not receipts_dir.is_absolute() else receipts_dir,
             halt_file=(root / halt_file) if not halt_file.is_absolute() else halt_file,

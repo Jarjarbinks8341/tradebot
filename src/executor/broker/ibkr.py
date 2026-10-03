@@ -25,6 +25,7 @@ class IBKRBroker(BrokerClient):
         self.client_id = client_id
         self.ib = IB()
         self._cached_bp: float | None = None
+        self._cached_cash: float | None = None
         self._cached_positions: dict[str, float] | None = None
 
     async def connect(self) -> None:
@@ -47,6 +48,15 @@ class IBKRBroker(BrokerClient):
             bp = next((float(r.value) for r in summary if r.tag == "BuyingPower"), 0.0)
             self._cached_bp = bp
         return self._cached_bp
+
+    async def get_cash(self) -> float:
+        """Settled cash (TotalCashValue) — the no-margin spending limit."""
+        if self._cached_cash is None:
+            summary = await self.ib.accountSummaryAsync()
+            self._cached_cash = next(
+                (float(r.value) for r in summary if r.tag == "TotalCashValue"), 0.0
+            )
+        return self._cached_cash
 
     async def _positions_map(self) -> dict[str, float]:
         if self._cached_positions is None:
@@ -77,10 +87,18 @@ class IBKRBroker(BrokerClient):
     async def get_quote(self, ticker: str) -> float:
         contract = Stock(ticker.upper(), "SMART", "USD")
         await self.ib.qualifyContractsAsync(contract)
+        # Fall back to delayed data (type 3) for paper accounts without live subscriptions.
+        self.ib.reqMarketDataType(3)
         ticker_obj = self.ib.reqMktData(contract, "", False, False)
-        for _ in range(20):
+        for _ in range(40):
             await asyncio.sleep(0.25)
-            price = ticker_obj.last or ticker_obj.close or ticker_obj.marketPrice()
+            price = (
+                ticker_obj.last
+                or ticker_obj.close
+                or getattr(ticker_obj, "delayedLast", None)
+                or getattr(ticker_obj, "delayedClose", None)
+                or ticker_obj.marketPrice()
+            )
             if price and price > 0:
                 self.ib.cancelMktData(contract)
                 return float(price)
@@ -88,7 +106,7 @@ class IBKRBroker(BrokerClient):
         raise RuntimeError(f"no quote available for {ticker}")
 
     async def place_limit_order(
-        self, ticker: str, action: Action, qty: float, limit_price: float
+        self, ticker: str, action: Action, qty: float, limit_price: float, tif: str = "DAY"
     ) -> OrderHandle:
         if qty != int(qty):
             raise ValueError(
@@ -97,10 +115,11 @@ class IBKRBroker(BrokerClient):
             )
         contract = Stock(ticker.upper(), "SMART", "USD")
         await self.ib.qualifyContractsAsync(contract)
-        order = LimitOrder(action.value, int(qty), float(limit_price), tif="DAY")
+        order = LimitOrder(action.value, int(qty), float(limit_price), tif=tif)
         trade = self.ib.placeOrder(contract, order)
         # Invalidate caches — bp and positions will change.
         self._cached_bp = None
+        self._cached_cash = None
         self._cached_positions = None
         return OrderHandle(
             broker_id=str(trade.order.orderId),
