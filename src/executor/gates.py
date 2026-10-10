@@ -147,6 +147,57 @@ def whole_shares(qty: float) -> GateResult:
     return GateResult(True, f"qty {int(qty)}")
 
 
+def whole_contracts(qty: float) -> GateResult:
+    if qty <= 0 or qty != int(qty):
+        return GateResult(False, f"qty {qty} must be a positive whole number of contracts")
+    return GateResult(True, f"qty {int(qty)} contract(s)")
+
+
+def option_dte_at_least(dte: int, min_dte: int) -> GateResult:
+    if dte < min_dte:
+        return GateResult(False, f"{dte} days to expiry < minimum {min_dte}")
+    return GateResult(True, f"{dte} days to expiry >= {min_dte}")
+
+
+def option_limit_reasonable(
+    limit_price: float,
+    bid: float | None,
+    ask: float | None,
+    reference: float | None,
+    max_pct: float,
+) -> GateResult:
+    """Fat-finger guard for options: inside the bid/ask, or within max_pct of the reference."""
+    if limit_price <= 0:
+        return GateResult(False, f"non-positive limit ${limit_price}")
+    if bid and ask and bid <= limit_price <= ask:
+        return GateResult(True, f"limit ${limit_price:.2f} inside bid/ask ${bid:.2f}/${ask:.2f}")
+    if not reference:
+        return GateResult(False, "no option quote to check the limit against")
+    pct = abs(limit_price - reference) / reference * 100
+    if pct > max_pct:
+        return GateResult(
+            False,
+            f"limit ${limit_price:.2f} is {pct:.1f}% from reference ${reference:.2f} "
+            f"(max {max_pct:.1f}%)",
+        )
+    return GateResult(True, f"limit {pct:.1f}% from reference ${reference:.2f}")
+
+
+def put_cash_secured(
+    cash: float, committed_collateral: float, new_collateral: float
+) -> GateResult:
+    """A short put is only allowed if settled cash covers assignment of it and every other put."""
+    free = cash - committed_collateral
+    if free < new_collateral:
+        return GateResult(
+            False,
+            f"free cash ${free:.2f} (cash ${cash:.2f} - existing put collateral "
+            f"${committed_collateral:.2f}) < assignment cost ${new_collateral:.2f} — "
+            "puts must be fully cash-secured",
+        )
+    return GateResult(True, f"free cash ${free:.2f} >= assignment cost ${new_collateral:.2f}")
+
+
 def position_sufficient(position: float, qty: float) -> GateResult:
     if position < qty:
         return GateResult(False, f"position {position} < qty {qty}")
@@ -170,9 +221,13 @@ __all__ = [
     "limit_near_quote",
     "market_is_open",
     "no_open_orders",
+    "option_dte_at_least",
+    "option_limit_reasonable",
     "order_notional_within_cap",
     "position_sufficient",
+    "put_cash_secured",
     "reference_price_drift",
+    "whole_contracts",
     "whole_shares",
 ]
 

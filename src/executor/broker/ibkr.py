@@ -9,16 +9,44 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 
-from ib_async import IB, LimitOrder, Stock
+from ib_async import IB, LimitOrder, Option, Stock
 
 from ..signal import Action
-from .base import BrokerClient, OrderHandle, OrderResult
+from .base import (
+    OpenOptionOrder,
+    OptionContract,
+    OptionQuote,
+    OptionsBroker,
+    OrderHandle,
+    OrderResult,
+)
 
 log = logging.getLogger(__name__)
 
 
-class IBKRBroker(BrokerClient):
+def _num(x: float | None) -> float | None:
+    """ib_async reports missing ticks as nan or -1; normalise to None."""
+    if x is None or (isinstance(x, float) and math.isnan(x)) or x <= 0:
+        return None
+    return float(x)
+
+
+def _ib_option(c: OptionContract) -> Option:
+    return Option(c.symbol, c.expiry, c.strike, c.right, "SMART", multiplier="100", currency="USD")
+
+
+def _option_contract(ib_contract) -> OptionContract:
+    return OptionContract(
+        symbol=ib_contract.symbol,
+        expiry=ib_contract.lastTradeDateOrContractMonth,
+        strike=float(ib_contract.strike),
+        right=ib_contract.right[0],
+    )
+
+
+class IBKRBroker(OptionsBroker):
     def __init__(self, host: str, port: int, client_id: int) -> None:
         self.host = host
         self.port = port
@@ -26,7 +54,7 @@ class IBKRBroker(BrokerClient):
         self.ib = IB()
         self._cached_bp: float | None = None
         self._cached_cash: float | None = None
-        self._cached_positions: dict[str, float] | None = None
+        self._cached_positions: list | None = None
 
     async def connect(self) -> None:
         await self.ib.connectAsync(self.host, self.port, clientId=self.client_id)
@@ -58,11 +86,55 @@ class IBKRBroker(BrokerClient):
             )
         return self._cached_cash
 
-    async def _positions_map(self) -> dict[str, float]:
+    async def get_free_cash(self) -> float:
+        """Settled cash minus collateral already promised to short puts and working put sells."""
+        return await self.get_cash() - await self.get_committed_put_collateral()
+
+    async def _positions(self) -> list:
         if self._cached_positions is None:
-            positions = await self.ib.reqPositionsAsync()
-            self._cached_positions = {p.contract.symbol: float(p.position) for p in positions}
+            self._cached_positions = list(await self.ib.reqPositionsAsync())
         return self._cached_positions
+
+    async def _positions_map(self) -> dict[str, float]:
+        """Stock/ETF positions only — option positions share the symbol and must not mix in."""
+        return {
+            p.contract.symbol: float(p.position)
+            for p in await self._positions()
+            if p.contract.secType == "STK"
+        }
+
+    async def get_option_positions(self) -> dict[OptionContract, float]:
+        return {
+            _option_contract(p.contract): float(p.position)
+            for p in await self._positions()
+            if p.contract.secType == "OPT"
+        }
+
+    async def get_open_option_orders(self) -> list[OpenOptionOrder]:
+        trades = await self.ib.reqAllOpenOrdersAsync()
+        return [
+            OpenOptionOrder(
+                contract=_option_contract(t.contract),
+                action=Action.BUY if t.order.action == "BUY" else Action.SELL,
+                qty=float(t.order.totalQuantity),
+            )
+            for t in trades
+            if t.contract.secType == "OPT"
+        ]
+
+    async def get_committed_put_collateral(self) -> float:
+        """Cash that would be needed if every short put (held or working) were assigned."""
+        held = sum(
+            c.strike * 100 * -qty
+            for c, qty in (await self.get_option_positions()).items()
+            if c.right == "P" and qty < 0
+        )
+        working = sum(
+            o.contract.strike * 100 * o.qty
+            for o in await self.get_open_option_orders()
+            if o.contract.right == "P" and o.action == Action.SELL
+        )
+        return held + working
 
     async def get_position(self, ticker: str) -> float:
         return (await self._positions_map()).get(ticker.upper(), 0.0)
@@ -104,6 +176,72 @@ class IBKRBroker(BrokerClient):
                 return float(price)
         self.ib.cancelMktData(contract)
         raise RuntimeError(f"no quote available for {ticker}")
+
+    async def get_option_chain(self, symbol: str) -> tuple[list[str], list[float]]:
+        stock = Stock(symbol.upper(), "SMART", "USD")
+        await self.ib.qualifyContractsAsync(stock)
+        if not stock.conId:
+            raise ValueError(f"unknown stock {symbol}")
+        params = await self.ib.reqSecDefOptParamsAsync(stock.symbol, "", "STK", stock.conId)
+        chain = next((p for p in params if p.exchange == "SMART"), None)
+        if chain is None:
+            raise ValueError(f"no listed options for {symbol}")
+        return sorted(chain.expirations), sorted(chain.strikes)
+
+    async def get_option_strikes(self, symbol: str, expiry: str) -> list[float]:
+        """Strikes actually listed for one expiry (the chain's strike list is a union)."""
+        probe = Option(symbol.upper(), expiry, exchange="SMART", currency="USD", right="C")
+        details = await self.ib.reqContractDetailsAsync(probe)
+        return sorted({d.contract.strike for d in details})
+
+    async def _qualified_option(self, c: OptionContract) -> Option:
+        contract = _ib_option(c)
+        await self.ib.qualifyContractsAsync(contract)
+        if not contract.conId:
+            raise ValueError(f"no such option {c.label} — check expiry/strike with the chain")
+        return contract
+
+    async def get_option_quote(self, c: OptionContract) -> OptionQuote:
+        contract = await self._qualified_option(c)
+        self.ib.reqMarketDataType(3)  # live if subscribed, else delayed / frozen
+        t = self.ib.reqMktData(contract, "", False, False)
+        try:
+            for _ in range(40):
+                await asyncio.sleep(0.25)
+                if _num(t.bid) and _num(t.ask) and t.modelGreeks:
+                    break
+        finally:
+            self.ib.cancelMktData(contract)
+        greeks = t.modelGreeks
+        q = OptionQuote(
+            bid=_num(t.bid),
+            ask=_num(t.ask),
+            last=_num(t.last),
+            close=_num(t.close),
+            delta=greeks.delta if greeks and greeks.delta is not None else None,
+            iv=_num(greeks.impliedVol) if greeks else None,
+            underlying=_num(greeks.undPrice) if greeks else None,
+        )
+        if q.reference()[0] is None:
+            raise RuntimeError(f"no quote available for {c.label}")
+        return q
+
+    async def place_option_limit_order(
+        self, c: OptionContract, action: Action, qty: int, limit_price: float, tif: str = "DAY"
+    ) -> OrderHandle:
+        contract = await self._qualified_option(c)
+        order = LimitOrder(action.value, int(qty), float(limit_price), tif=tif)
+        trade = self.ib.placeOrder(contract, order)
+        self._cached_bp = None
+        self._cached_cash = None
+        self._cached_positions = None
+        return OrderHandle(
+            broker_id=str(trade.order.orderId),
+            ticker=c.label,
+            action=action,
+            qty=float(qty),
+            limit_price=float(limit_price),
+        )
 
     async def place_limit_order(
         self, ticker: str, action: Action, qty: float, limit_price: float, tif: str = "DAY"

@@ -98,7 +98,7 @@ async def _handle_tradeable(
     if signal.action == Action.BUY:
         # Producer sizes against its own capital assumption, not this account — so cap
         # every BUY by settled cash (never margin) and by hard per-order/daily limits.
-        cash = await broker.get_cash()
+        cash = await broker.get_free_cash()  # excludes cash securing short puts
         today = datetime.now(UTC) - timedelta(hours=24)
         for name, g in (
             ("cash_sufficient",

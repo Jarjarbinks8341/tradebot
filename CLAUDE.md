@@ -62,6 +62,7 @@ launchd  ──►  execute.main()
 - **`signals/` 404 = no-op.** A 404 is silently treated as "no signals" — so a wrong `FIB_REPO` looks exactly like a quiet market. The repo is `Jarjarbinks8341/fib-accumulator` (private); verify with `scripts/smoke_poller.py` after any config change. (It sat on the wrong owner from 2026-04 to 2026-10 unnoticed.)
 - **BUYs never use margin.** The producer sizes signals against its own `FIB_INITIAL_CAPITAL` ($50k), not this account. Every live BUY (executor or MCP) is gated on settled cash (`TotalCashValue`, not `BuyingPower` which includes ~6.7x margin), plus `MAX_ORDER_USD` per order and `MAX_DAILY_USD` rolling-24h across both sources (`placed_orders` table).
 - **MCP server places real orders** (`tradebot-mcp`, stdio only). Two-step `preview_order` → `place_order(preview_id)`; preview is single-use, expires in 5 min; HALT and daily cap re-checked at place time. Limit orders, whole shares, fat-finger guard (`MAX_LIMIT_FROM_QUOTE_PCT`). Uses `IB_MCP_CLIENT_ID` (18) so it never collides with the executor (17).
+- **Options via MCP only: cash-secured puts + long calls.** `preview_option_order` opens only SELL put (assignment cash `strike×100` must be covered by settled cash minus collateral of existing short puts and working put sells) or BUY call (≥ `MIN_LONG_CALL_DTE`, default 180). BUY put / SELL call are allowed only to close a held position — no naked calls, no long puts. Put collateral counts toward `MAX_PUT_COLLATERAL_USD` and `MAX_DAILY_USD`; call premium toward `MAX_ORDER_USD` and `MAX_DAILY_USD`. Stock BUYs (executor + MCP) use `get_free_cash()` so they can't spend cash securing puts. The hourly executor never trades options.
 
 ## Module map
 
@@ -71,10 +72,10 @@ launchd  ──►  execute.main()
 | `src/executor/poller.py` | GitHub Contents API client. 404 on `signals/` → empty list, no error. |
 | `src/executor/store.py` | SQLite idempotency store. `already_executed` + upsert `record`. |
 | `src/executor/gates.py` | Pure `(ok, reason)` functions: halt file, market hours (hard-coded NYSE holidays 2026-2027), drift, buying power, positions, open orders. |
-| `src/executor/broker/base.py` | `BrokerClient` `Protocol` + `OrderHandle`/`OrderResult` dataclasses. |
+| `src/executor/broker/base.py` | `BrokerClient`/`OptionsBroker` `Protocol`s + `OrderHandle`/`OrderResult`/`OptionContract`/`OptionQuote` dataclasses. |
 | `src/executor/broker/ibkr.py` | `ib-async` implementation. Caches buying power + positions per-invocation to respect rate limits. |
 | `src/executor/order_desk.py` | Preview → place state machine + gates for manual (MCP) orders. Pure enough to test with a fake broker. |
-| `src/executor/mcp_server.py` | FastMCP tools: `get_account`, `get_quote`, `preview_order`, `place_order`, `list_open_orders`, `cancel_order`. |
+| `src/executor/mcp_server.py` | FastMCP tools: `get_account`, `get_quote`, `preview_order`, `get_option_chain`, `get_option_quote`, `preview_option_order`, `place_order`, `list_open_orders`, `cancel_order`. |
 | `src/executor/execute.py` | Orchestration entrypoint. `--signal-file` for offline fixture dry-runs. |
 | `src/executor/config.py` | `.env.local` / `.env` loader; frozen `Settings` dataclass. |
 | `tests/fixtures/sample_signal.json` | Canonical schema example. Dates in 2099 so `is_expired()` is always false. |
@@ -162,6 +163,7 @@ And update `IbLoginId`/`TradingMode` in IBC config.
 - **Holiday list is hard-coded** in `gates.py` through 2027. Refresh annually from https://www.nyse.com/markets/hours-calendars.
 - **IB Gateway auto-logout** at ~01:00 ET daily. IBC handles re-login; the bot ignores the ~1-minute connection-refused window and retries next hour.
 - **`Minute=5` cron** is deliberate — dodges top-of-hour traffic and the IB Gateway restart window.
+- **No options market data over the API** without an OPRA subscription: option quotes come back with last/close only (no bid/ask/Greeks), so the option fat-finger guard falls back to last, then close.
 - **Rate limits**: the IBKR broker caches `buying_power` and `positions` for the lifetime of one invocation. Don't add call sites that bypass the cache.
 - **No log rotation**: launchd doesn't rotate `~/Library/Logs/tradebot.*.log`. Clean up manually or add a `newsyslog.d` config later.
 - **Clock drift** would make `is_expired` lie. macOS syncs NTP by default; verify with `sudo systemsetup -getnetworktimeserver`. The executor logs `now_utc` at the top of every tick for visibility.

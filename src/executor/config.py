@@ -62,6 +62,11 @@ class Settings:
     max_limit_from_quote_pct: float
     ib_mcp_client_id: int
 
+    # Options (MCP only): cash-secured puts + long calls
+    max_put_collateral_usd: float
+    min_long_call_dte: int
+    max_option_limit_from_mid_pct: float
+
     # Paths
     state_db: Path
     receipts_dir: Path
@@ -72,6 +77,7 @@ class Settings:
         root = repo_root or Path(__file__).resolve().parents[2]
         _load_env(root)
 
+        max_order_usd = _float("MAX_ORDER_USD", 2500.0)
         state_db = Path(os.environ.get("STATE_DB", "state/executed_signals.db"))
         receipts_dir = Path(os.environ.get("RECEIPTS_DIR", "receipts"))
         halt_file = Path(os.environ.get("HALT_FILE", "HALT"))
@@ -88,10 +94,13 @@ class Settings:
             max_reference_drift_pct=_float("MAX_REFERENCE_DRIFT_PCT", 5.0),
             buying_power_buffer=_float("BUYING_POWER_BUFFER", 1.02),
             order_poll_timeout_s=_int("ORDER_POLL_TIMEOUT_S", 300),
-            max_order_usd=_float("MAX_ORDER_USD", 2500.0),
+            max_order_usd=max_order_usd,
             max_daily_usd=_float("MAX_DAILY_USD", 5000.0),
             max_limit_from_quote_pct=_float("MAX_LIMIT_FROM_QUOTE_PCT", 3.0),
             ib_mcp_client_id=_int("IB_MCP_CLIENT_ID", 18),
+            max_put_collateral_usd=_float("MAX_PUT_COLLATERAL_USD", max_order_usd),
+            min_long_call_dte=_int("MIN_LONG_CALL_DTE", 180),
+            max_option_limit_from_mid_pct=_float("MAX_OPTION_LIMIT_FROM_MID_PCT", 10.0),
             state_db=(root / state_db) if not state_db.is_absolute() else state_db,
             receipts_dir=(root / receipts_dir) if not receipts_dir.is_absolute() else receipts_dir,
             halt_file=(root / halt_file) if not halt_file.is_absolute() else halt_file,
